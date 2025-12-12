@@ -184,31 +184,59 @@ class MainActivity : ComponentActivity() {
                             when (viewMode) {
 
                                 CalendarViewMode.MONTH -> {
-                                    // 月视图（仍然使用 CalendarView）
-                                    AndroidView(
-                                        factory = { context ->
-                                            CalendarView(context).apply {
-                                                setOnDateChangeListener { _, year, month, day ->
-                                                    val cal = Calendar.getInstance().apply {
-                                                        set(year, month, day, 0, 0, 0)
-                                                        set(Calendar.MILLISECOND, 0)
+                                    Column {
+
+                                        // 月历
+                                        AndroidView(
+                                            factory = { context ->
+                                                CalendarView(context).apply {
+                                                    setOnDateChangeListener { _, year, month, day ->
+                                                        val cal = Calendar.getInstance().apply {
+                                                            set(year, month, day, 0, 0, 0)
+                                                            set(Calendar.MILLISECOND, 0)
+                                                        }
+                                                        selectedDate = cal.timeInMillis
+                                                        // ❗不跳转视图
                                                     }
-                                                    selectedDate = cal.timeInMillis
-                                                    viewMode = CalendarViewMode.DAY // 👈 点月 → 进日视图
                                                 }
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
+                                            },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+
+                                        Spacer(Modifier.height(16.dp))
+
+                                        // 👇 新增：进入日视图按钮
+                                        Button(
+                                            onClick = {
+                                                viewMode = CalendarViewMode.DAY
+                                            },
+                                            modifier = Modifier
+                                                .align(Alignment.CenterHorizontally)
+                                        ) {
+                                            Text("查看当天日程")
+                                        }
+                                    }
                                 }
 
                                 CalendarViewMode.WEEK -> {
                                     WeekView(
                                         selectedDate = selectedDate,
                                         datesWithEvents = datesWithEvents,
+
                                         onDateSelected = { date ->
                                             selectedDate = date
+                                        },
+
+                                        onEnterDayView = {
                                             viewMode = CalendarViewMode.DAY
+                                        },
+
+                                        onPrevWeek = {
+                                            selectedDate = addDays(selectedDate, -7)
+                                        },
+
+                                        onNextWeek = {
+                                            selectedDate = addDays(selectedDate, 7)
                                         }
                                     )
                                 }
@@ -220,25 +248,38 @@ class MainActivity : ComponentActivity() {
                                         eventsForDay = eventsForDay,
                                         searchQuery = searchQuery,
                                         onSearchChange = { searchQuery = it },
-                                        onEventClick = {
-                                            viewingEvent = it
+
+                                        // ✅ 这里必须显式接收 event 参数
+                                        onEventClick = { event ->
+                                            viewingEvent = event
                                             showViewDialog = true
                                         },
-                                        onToggleFinished = {
+
+                                        onToggleFinished = { event ->
                                             lifecycleScope.launch {
-                                                dao.updateEvent(it.copy(finished = !it.finished))
+                                                dao.updateEvent(event.copy(finished = !event.finished))
                                                 eventsForDay = dao.getEventsByDate(selectedDate)
                                             }
                                         },
-                                        onDeleteEvent = {
+
+                                        onDeleteEvent = { event ->
                                             lifecycleScope.launch {
-                                                dao.deleteEvent(it)
+                                                dao.deleteEvent(event)
                                                 eventsForDay = dao.getEventsByDate(selectedDate)
                                                 refreshDatesWithEvents()
                                             }
+                                        },
+
+                                        onPrevDay = {
+                                            selectedDate = addDays(selectedDate, -1)
+                                        },
+
+                                        onNextDay = {
+                                            selectedDate = addDays(selectedDate, 1)
                                         }
                                     )
                                 }
+
                             }
 
 
@@ -341,10 +382,29 @@ fun DayView(
     onSearchChange: (String) -> Unit,
     onEventClick: (Event) -> Unit,
     onToggleFinished: (Event) -> Unit,
-    onDeleteEvent: (Event) -> Unit
+    onDeleteEvent: (Event) -> Unit,
+    onPrevDay: () -> Unit,
+    onNextDay: () -> Unit
 ) {
     Column {
 
+        // ✅ ①【就在这里放】—— 日期标题 + 前后天按钮
+        val title = remember(selectedDate) { dayTitleText(selectedDate) }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onPrevDay) { Text("前一天") }
+            Spacer(Modifier.weight(1f))
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onNextDay) { Text("后一天") }
+        }
+
+        // ② 搜索框（你原来就有的）
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchChange,
@@ -357,6 +417,7 @@ fun DayView(
 
         Spacer(Modifier.height(8.dp))
 
+        // ③ 当天事件列表
         LazyColumn(
             modifier = Modifier.fillMaxSize()
         ) {
@@ -375,6 +436,7 @@ fun DayView(
         }
     }
 }
+
 
 @Composable
 fun EventItem(
@@ -541,50 +603,83 @@ fun getToday(): Long {
 fun WeekView(
     selectedDate: Long,
     datesWithEvents: Set<Long>,
-    onDateSelected: (Long) -> Unit
+    onDateSelected: (Long) -> Unit,
+    onPrevWeek: () -> Unit,
+    onEnterDayView: () -> Unit,
+    onNextWeek: () -> Unit
 ) {
     val weekDates = remember(selectedDate) { getWeekDates(selectedDate) }
+    val title = remember(selectedDate) { weekRangeText(selectedDate) }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        weekDates.forEach { date ->
-            val cal = Calendar.getInstance().apply { timeInMillis = date }
-            val day = cal.get(Calendar.DAY_OF_MONTH)
-            val isSelected = date == selectedDate
-            val hasEvent = date in datesWithEvents
+    Column(modifier = Modifier.fillMaxWidth()) {
 
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { onDateSelected(date) }
-                    .padding(6.dp)
-            ) {
-                Text(
-                    text = day.toString(),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = when {
-                        isSelected -> MaterialTheme.colorScheme.primary
-                        hasEvent -> MaterialTheme.colorScheme.secondary
-                        else -> LocalContentColor.current
-                    }
-                )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onPrevWeek) { Text("上周") }
+            Spacer(Modifier.weight(1f))
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onNextWeek) { Text("下周") }
+        }
 
-                if (hasEvent) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .background(
-                                MaterialTheme.colorScheme.secondary,
-                                shape = MaterialTheme.shapes.small
-                            )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            weekDates.forEach { date ->
+                val cal = Calendar.getInstance().apply { timeInMillis = date }
+                val day = cal.get(Calendar.DAY_OF_MONTH)
+                val isSelected = date == selectedDate
+                val hasEvent = date in datesWithEvents
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onDateSelected(date) }
+                        .padding(6.dp)
+                ) {
+                    Text(
+                        text = day.toString(),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = when {
+                            isSelected -> MaterialTheme.colorScheme.primary
+                            hasEvent -> MaterialTheme.colorScheme.secondary
+                            else -> LocalContentColor.current
+                        }
                     )
+
+                    if (hasEvent) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.secondary,
+                                    shape = MaterialTheme.shapes.small
+                                )
+                        )
+                    }
                 }
             }
+        }
+        Spacer(Modifier.height(12.dp))
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+                Button(
+                    onClick = {
+                        onEnterDayView()   // 👈 关键修改
+                    }
+                ) {
+                    Text("查看该日的日程")
+                }
         }
     }
 }
@@ -610,4 +705,37 @@ fun getWeekDates(selectedDate: Long): List<Long> {
         cal.add(Calendar.DAY_OF_MONTH, offset)
         cal.timeInMillis
     }
+}
+fun addDays(date: Long, days: Int): Long {
+    val cal = Calendar.getInstance().apply { timeInMillis = date }
+    cal.add(Calendar.DAY_OF_MONTH, days)
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    return cal.timeInMillis
+}
+
+fun weekRangeText(selectedDate: Long): String {
+    val start = startOfWeek(selectedDate)
+    val end = addDays(start, 6)
+    val sdf = java.text.SimpleDateFormat("MM/dd", java.util.Locale.getDefault())
+    val yearSdf = java.text.SimpleDateFormat("yyyy年MM月", java.util.Locale.getDefault())
+    // 用周起点的年月当“本周月份标题”（跨月周也能接受，想更严谨我们再升级）
+    val title = yearSdf.format(java.util.Date(start))
+    return "$title  ${sdf.format(java.util.Date(start))}–${sdf.format(java.util.Date(end))}"
+}
+fun dayTitleText(date: Long): String {
+    val cal = Calendar.getInstance().apply { timeInMillis = date }
+    val sdf = java.text.SimpleDateFormat("yyyy年MM月dd日", java.util.Locale.getDefault())
+    val weekDay = when (cal.get(Calendar.DAY_OF_WEEK)) {
+        Calendar.MONDAY -> "周一"
+        Calendar.TUESDAY -> "周二"
+        Calendar.WEDNESDAY -> "周三"
+        Calendar.THURSDAY -> "周四"
+        Calendar.FRIDAY -> "周五"
+        Calendar.SATURDAY -> "周六"
+        else -> "周日"
+    }
+    return "${sdf.format(java.util.Date(date))}  $weekDay"
 }
