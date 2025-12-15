@@ -3,11 +3,14 @@ package com.example.calendar
 import com.example.calendar.data.LunarCalendar
 import com.example.calendar.data.Zodiac
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import android.widget.CalendarView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -28,13 +31,24 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
 import com.example.calendar.data.DatabaseProvider
 import com.example.calendar.data.Event
+import com.example.calendar.reminder.ReminderScheduler
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
 class MainActivity : ComponentActivity() {
 
+    // Android 13+ 通知权限
+    private val requestNotifPerm = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* granted -> 不强制处理 */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 进入就申请一次（Android 13+ 才需要）
+        if (Build.VERSION.SDK_INT >= 33) {
+            requestNotifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         val db = DatabaseProvider.getDatabase(this)
         val dao = db.eventDao()
@@ -43,32 +57,25 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
 
                 var selectedDate by remember { mutableStateOf(getToday()) }
-                //日式图
                 var viewMode by remember { mutableStateOf(CalendarViewMode.DAY) }
-
 
                 var eventsForDay by remember { mutableStateOf<List<Event>>(emptyList()) }
                 var datesWithEvents by remember { mutableStateOf<Set<Long>>(emptySet()) }
 
                 var searchQuery by remember { mutableStateOf("") }
 
-                // 添加
                 var showAddDialog by remember { mutableStateOf(false) }
 
-                // 查看
                 var viewingEvent by remember { mutableStateOf<Event?>(null) }
                 var showViewDialog by remember { mutableStateOf(false) }
 
-                // 编辑
                 var editingEvent by remember { mutableStateOf<Event?>(null) }
                 var showEditDialog by remember { mutableStateOf(false) }
 
-                // 选中日期 -> 刷新当天事件
                 LaunchedEffect(selectedDate) {
                     eventsForDay = dao.getEventsByDate(selectedDate)
                 }
 
-                // 启动时加载“哪些日期有事件”
                 LaunchedEffect(Unit) {
                     datesWithEvents = dao.getAllEvents().map { it.date }.toSet()
                 }
@@ -87,17 +94,25 @@ class MainActivity : ComponentActivity() {
                     // ---------- 新增弹窗 ----------
                     if (showAddDialog) {
                         AddEventDialog(
+                            selectedDate = selectedDate,
                             onDismiss = { showAddDialog = false },
-                            onSave = { title, desc, category ->
+                            onSave = { title, desc, category, reminderMillis ->
                                 lifecycleScope.launch {
-                                    dao.insertEvent(
-                                        Event(
-                                            title = title,
-                                            description = desc,
-                                            date = selectedDate,
-                                            category = category
-                                        )
+                                    val newEvent = Event(
+                                        title = title,
+                                        description = desc,
+                                        date = selectedDate,
+                                        category = category,
+                                        time = reminderMillis
                                     )
+
+                                    // ✅ insert 拿到真实 id
+                                    val newId = dao.insertEvent(newEvent).toInt()
+                                    val eventWithId = newEvent.copy(id = newId)
+
+                                    // ✅ 安排提醒（如果 time != null 且未来）
+                                    ReminderScheduler.schedule(this@MainActivity, eventWithId)
+
                                     eventsForDay = dao.getEventsByDate(selectedDate)
                                     refreshDatesWithEvents()
                                 }
@@ -124,6 +139,9 @@ class MainActivity : ComponentActivity() {
                                 val toDelete = viewingEvent
                                 if (toDelete != null) {
                                     lifecycleScope.launch {
+                                        // ✅ 删除前取消提醒
+                                        ReminderScheduler.cancel(this@MainActivity, toDelete)
+
                                         dao.deleteEvent(toDelete)
                                         eventsForDay = dao.getEventsByDate(selectedDate)
                                         refreshDatesWithEvents()
@@ -136,6 +154,8 @@ class MainActivity : ComponentActivity() {
                     }
 
                     // ---------- 编辑弹窗 ----------
+                    // 目前你的编辑弹窗只改标题/描述，不改 time
+                    // 所以这里暂时不做 schedule/cancel；后续你要支持改提醒时间，再加即可
                     if (showEditDialog && editingEvent != null) {
                         EditEventDialog(
                             event = editingEvent!!,
@@ -166,27 +186,20 @@ class MainActivity : ComponentActivity() {
                         Column(modifier = Modifier.fillMaxSize()) {
                             val tabs = listOf("月视图", "周视图", "日视图")
 
-                            TabRow(
-                                selectedTabIndex = viewMode.ordinal
-                            ) {
+                            TabRow(selectedTabIndex = viewMode.ordinal) {
                                 tabs.forEachIndexed { index, title ->
                                     Tab(
                                         selected = viewMode.ordinal == index,
-                                        onClick = {
-                                            viewMode = CalendarViewMode.values()[index]
-                                        },
+                                        onClick = { viewMode = CalendarViewMode.values()[index] },
                                         text = { Text(title) }
                                     )
                                 }
                             }
 
-                            // 系统 CalendarView
                             when (viewMode) {
 
                                 CalendarViewMode.MONTH -> {
                                     Column {
-
-                                        // 月历
                                         AndroidView(
                                             factory = { context ->
                                                 CalendarView(context).apply {
@@ -196,7 +209,6 @@ class MainActivity : ComponentActivity() {
                                                             set(Calendar.MILLISECOND, 0)
                                                         }
                                                         selectedDate = cal.timeInMillis
-                                                        // ❗不跳转视图
                                                     }
                                                 }
                                             },
@@ -205,13 +217,9 @@ class MainActivity : ComponentActivity() {
 
                                         Spacer(Modifier.height(16.dp))
 
-                                        // 👇 新增：进入日视图按钮
                                         Button(
-                                            onClick = {
-                                                viewMode = CalendarViewMode.DAY
-                                            },
-                                            modifier = Modifier
-                                                .align(Alignment.CenterHorizontally)
+                                            onClick = { viewMode = CalendarViewMode.DAY },
+                                            modifier = Modifier.align(Alignment.CenterHorizontally)
                                         ) {
                                             Text("查看当天日程")
                                         }
@@ -222,25 +230,12 @@ class MainActivity : ComponentActivity() {
                                     WeekView(
                                         selectedDate = selectedDate,
                                         datesWithEvents = datesWithEvents,
-
-                                        onDateSelected = { date ->
-                                            selectedDate = date
-                                        },
-
-                                        onEnterDayView = {
-                                            viewMode = CalendarViewMode.DAY
-                                        },
-
-                                        onPrevWeek = {
-                                            selectedDate = addDays(selectedDate, -7)
-                                        },
-
-                                        onNextWeek = {
-                                            selectedDate = addDays(selectedDate, 7)
-                                        }
+                                        onDateSelected = { date -> selectedDate = date },
+                                        onEnterDayView = { viewMode = CalendarViewMode.DAY },
+                                        onPrevWeek = { selectedDate = addDays(selectedDate, -7) },
+                                        onNextWeek = { selectedDate = addDays(selectedDate, 7) }
                                     )
                                 }
-
 
                                 CalendarViewMode.DAY -> {
                                     DayView(
@@ -248,44 +243,39 @@ class MainActivity : ComponentActivity() {
                                         eventsForDay = eventsForDay,
                                         searchQuery = searchQuery,
                                         onSearchChange = { searchQuery = it },
-
-                                        // ✅ 这里必须显式接收 event 参数
                                         onEventClick = { event ->
                                             viewingEvent = event
                                             showViewDialog = true
                                         },
-
                                         onToggleFinished = { event ->
                                             lifecycleScope.launch {
                                                 dao.updateEvent(event.copy(finished = !event.finished))
                                                 eventsForDay = dao.getEventsByDate(selectedDate)
+
+                                                // ✅ 完成后就取消提醒；取消完成则重新安排（如果有 time）
+                                                val updated = event.copy(finished = !event.finished)
+                                                ReminderScheduler.cancel(this@MainActivity, updated)
+                                                ReminderScheduler.schedule(this@MainActivity, updated)
                                             }
                                         },
-
                                         onDeleteEvent = { event ->
                                             lifecycleScope.launch {
+                                                // ✅ 删除前取消提醒
+                                                ReminderScheduler.cancel(this@MainActivity, event)
+
                                                 dao.deleteEvent(event)
                                                 eventsForDay = dao.getEventsByDate(selectedDate)
                                                 refreshDatesWithEvents()
                                             }
                                         },
-
-                                        onPrevDay = {
-                                            selectedDate = addDays(selectedDate, -1)
-                                        },
-
-                                        onNextDay = {
-                                            selectedDate = addDays(selectedDate, 1)
-                                        }
+                                        onPrevDay = { selectedDate = addDays(selectedDate, -1) },
+                                        onNextDay = { selectedDate = addDays(selectedDate, 1) }
                                     )
                                 }
-
                             }
-
 
                             Spacer(Modifier.height(8.dp))
 
-                            // ✅ 修复：LunarCalendar / Zodiac 都是接收 Calendar 参数
                             val cal = remember(selectedDate) {
                                 Calendar.getInstance().apply { timeInMillis = selectedDate }
                             }
@@ -304,7 +294,6 @@ class MainActivity : ComponentActivity() {
 
                             Spacer(Modifier.height(8.dp))
 
-                            // 搜索框
                             OutlinedTextField(
                                 value = searchQuery,
                                 onValueChange = { searchQuery = it },
@@ -333,9 +322,12 @@ class MainActivity : ComponentActivity() {
                                         event = event,
                                         onToggleFinished = {
                                             lifecycleScope.launch {
-                                                dao.updateEvent(event.copy(finished = !event.finished))
+                                                val updated = event.copy(finished = !event.finished)
+                                                dao.updateEvent(updated)
                                                 eventsForDay = dao.getEventsByDate(selectedDate)
-                                                // finished 不影响 datesWithEvents，所以不必刷新
+
+                                                ReminderScheduler.cancel(this@MainActivity, updated)
+                                                ReminderScheduler.schedule(this@MainActivity, updated)
                                             }
                                         },
                                         onClick = {
@@ -344,6 +336,8 @@ class MainActivity : ComponentActivity() {
                                         },
                                         onDelete = {
                                             lifecycleScope.launch {
+                                                ReminderScheduler.cancel(this@MainActivity, event)
+
                                                 dao.deleteEvent(event)
                                                 eventsForDay = dao.getEventsByDate(selectedDate)
                                                 refreshDatesWithEvents()
@@ -369,11 +363,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class CalendarViewMode {
-    MONTH,
-    WEEK,
-    DAY
-}
+enum class CalendarViewMode { MONTH, WEEK, DAY }
+
 @Composable
 fun DayView(
     selectedDate: Long,
@@ -387,8 +378,6 @@ fun DayView(
     onNextDay: () -> Unit
 ) {
     Column {
-
-        // ✅ ①【就在这里放】—— 日期标题 + 前后天按钮
         val title = remember(selectedDate) { dayTitleText(selectedDate) }
 
         Row(
@@ -404,7 +393,6 @@ fun DayView(
             TextButton(onClick = onNextDay) { Text("后一天") }
         }
 
-        // ② 搜索框（你原来就有的）
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchChange,
@@ -417,10 +405,7 @@ fun DayView(
 
         Spacer(Modifier.height(8.dp))
 
-        // ③ 当天事件列表
-        LazyColumn(
-            modifier = Modifier.fillMaxSize()
-        ) {
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(eventsForDay.filter {
                 searchQuery.isBlank() ||
                         it.title.contains(searchQuery, true) ||
@@ -436,7 +421,6 @@ fun DayView(
         }
     }
 }
-
 
 @Composable
 fun EventItem(
@@ -599,6 +583,7 @@ fun getToday(): Long {
     }
     return c.timeInMillis
 }
+
 @Composable
 fun WeekView(
     selectedDate: Long,
@@ -668,27 +653,20 @@ fun WeekView(
                 }
             }
         }
+
         Spacer(Modifier.height(12.dp))
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-                Button(
-                    onClick = {
-                        onEnterDayView()   // 👈 关键修改
-                    }
-                ) {
-                    Text("查看该日的日程")
-                }
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Button(onClick = { onEnterDayView() }) {
+                Text("查看该日的日程")
+            }
         }
     }
 }
 
-
 fun startOfWeek(date: Long): Long {
     val cal = Calendar.getInstance().apply {
         timeInMillis = date
-        set(Calendar.DAY_OF_WEEK, Calendar.MONDAY) // 周一开始
+        set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
         set(Calendar.HOUR_OF_DAY, 0)
         set(Calendar.MINUTE, 0)
         set(Calendar.SECOND, 0)
@@ -706,6 +684,7 @@ fun getWeekDates(selectedDate: Long): List<Long> {
         cal.timeInMillis
     }
 }
+
 fun addDays(date: Long, days: Int): Long {
     val cal = Calendar.getInstance().apply { timeInMillis = date }
     cal.add(Calendar.DAY_OF_MONTH, days)
@@ -721,10 +700,10 @@ fun weekRangeText(selectedDate: Long): String {
     val end = addDays(start, 6)
     val sdf = java.text.SimpleDateFormat("MM/dd", java.util.Locale.getDefault())
     val yearSdf = java.text.SimpleDateFormat("yyyy年MM月", java.util.Locale.getDefault())
-    // 用周起点的年月当“本周月份标题”（跨月周也能接受，想更严谨我们再升级）
     val title = yearSdf.format(java.util.Date(start))
     return "$title  ${sdf.format(java.util.Date(start))}–${sdf.format(java.util.Date(end))}"
 }
+
 fun dayTitleText(date: Long): String {
     val cal = Calendar.getInstance().apply { timeInMillis = date }
     val sdf = java.text.SimpleDateFormat("yyyy年MM月dd日", java.util.Locale.getDefault())

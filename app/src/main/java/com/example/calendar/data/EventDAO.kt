@@ -1,16 +1,17 @@
 package com.example.calendar.data
 
 import androidx.room.Dao
+import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.Query
-import androidx.room.Delete
 import androidx.room.Update
 
 @Dao
 interface EventDao {
 
+    // insert 返回新插入行的 id（用于设置闹钟 requestCode）
     @Insert
-    suspend fun insertEvent(event: Event)
+    suspend fun insertEvent(event: Event): Long
 
     @Update
     suspend fun updateEvent(event: Event)

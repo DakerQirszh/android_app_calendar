@@ -1,29 +1,50 @@
 package com.example.calendar
 
+import android.app.TimePickerDialog
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext   // ✅ 记得导入
 import androidx.compose.ui.unit.dp
+import java.util.Calendar
+import java.util.Locale
 
 @Composable
 fun AddEventDialog(
+    selectedDate: Long,
     onDismiss: () -> Unit,
-    onSave: (String, String, Int) -> Unit
+    onSave: (String, String, Int, Long?) -> Unit
 ) {
+    // ✅ 关键：在 Composable 作用域里取 context，然后在 onClick 里用它
+    val context = LocalContext.current
+
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
 
-    // C：类别选择
     val categories = listOf("工作", "学习", "生活", "提醒", "其他")
     var selectedCategory by remember { mutableStateOf(0) }
+
+    var reminderTimeMillis by remember { mutableStateOf<Long?>(null) }
+    var reminderText by remember { mutableStateOf("未设置") }
+
+    fun setReminderFromHourMinute(hour: Int, minute: Int) {
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = selectedDate
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        reminderTimeMillis = cal.timeInMillis
+        reminderText = String.format(Locale.getDefault(), "%02d:%02d", hour, minute)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("添加日程") },
         text = {
             Column {
-
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
@@ -57,18 +78,48 @@ fun AddEventDialog(
                         )
                     }
                 }
+
+                Spacer(Modifier.height(16.dp))
+                Text("提醒时间：", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            val now = Calendar.getInstance()
+                            TimePickerDialog(
+                                context,
+                                { _, hour, minute ->
+                                    setReminderFromHourMinute(hour, minute)
+                                },
+                                now.get(Calendar.HOUR_OF_DAY),
+                                now.get(Calendar.MINUTE),
+                                true
+                            ).show()
+                        }
+                    ) {
+                        Text(if (reminderTimeMillis == null) "设置提醒" else "修改：$reminderText")
+                    }
+
+                    if (reminderTimeMillis != null) {
+                        OutlinedButton(
+                            onClick = {
+                                reminderTimeMillis = null
+                                reminderText = "未设置"
+                            }
+                        ) { Text("清除") }
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     if (title.isNotBlank()) {
-                        onSave(title, desc, selectedCategory)
+                        onSave(title, desc, selectedCategory, reminderTimeMillis)
                     }
                 }
-            ) {
-                Text("保存")
-            }
+            ) { Text("保存") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
