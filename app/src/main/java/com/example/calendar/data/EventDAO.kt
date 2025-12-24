@@ -9,7 +9,7 @@ import androidx.room.Update
 @Dao
 interface EventDao {
 
-    // insert 返回新插入行的 id（用于设置闹钟 requestCode）
+    // insert 返回新插入行的 id
     @Insert
     suspend fun insertEvent(event: Event): Long
 

@@ -2,10 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Android 13+ 发通知必须声明 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- 重启后恢复提醒需要 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
@@ -29,12 +26,12 @@
             </intent-filter>
         </activity>
 
-        <!-- 到点提醒的 Receiver（不需要导出） -->
+        <!-- 到点提醒的 Receiver -->
         <receiver
             android:name=".reminder.AlarmReceiver"
             android:exported="false" />
 
-        <!-- 开机广播 Receiver（必须 exported=true 才能收到系统广播） -->
+        <!-- 开机广播 Receiver -->
         <receiver
             android:name=".reminder.BootReceiver"
             android:exported="true">

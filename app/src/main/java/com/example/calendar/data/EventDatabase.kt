@@ -5,7 +5,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [Event::class],
-    version = 2,          // ← 删除旧数据库后提升版本即可
+    version = 2,          //
     exportSchema = false
 )
 abstract class EventDatabase : RoomDatabase() {

@@ -1,14 +1,15 @@
 package com.example.calendar
-
 import android.app.TimePickerDialog
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext   // ✅ 记得导入
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import java.util.Calendar
 import java.util.Locale
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 
 @Composable
 fun AddEventDialog(
@@ -16,8 +17,8 @@ fun AddEventDialog(
     onDismiss: () -> Unit,
     onSave: (String, String, Int, Long?) -> Unit
 ) {
-    // ✅ 关键：在 Composable 作用域里取 context，然后在 onClick 里用它
     val context = LocalContext.current
+    var category by remember { mutableStateOf(0) }
 
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
@@ -61,23 +62,37 @@ fun AddEventDialog(
                 Spacer(Modifier.height(16.dp))
                 Text("类别：", style = MaterialTheme.typography.titleMedium)
 
-                Row(
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    categories.forEachIndexed { index, text ->
-                        AssistChip(
-                            onClick = { selectedCategory = index },
-                            label = { Text(text) },
-                            colors = AssistChipDefaults.assistChipColors(
-                                containerColor = if (selectedCategory == index)
-                                    MaterialTheme.colorScheme.primaryContainer
-                                else
-                                    MaterialTheme.colorScheme.surfaceVariant
-                            )
+                    listOf("工作", "学习", "生活", "提醒", "其他").forEachIndexed { index, text ->
+                        FilterChip(
+                            selected = category == index,
+                            onClick = { category = index },
+                            label = { Text(text) }
                         )
                     }
                 }
+//                Row(
+//                    modifier = Modifier.fillMaxWidth(),
+//                    horizontalArrangement = Arrangement.SpaceEvenly
+//                ) {
+//                    categories.forEachIndexed { index, text ->
+//                        AssistChip(
+//                            onClick = { selectedCategory = index },
+//                            label = { Text(text) },
+//                            colors = AssistChipDefaults.assistChipColors(
+//                                containerColor = if (selectedCategory == index)
+//                                    MaterialTheme.colorScheme.primaryContainer
+//                                else
+//                                    MaterialTheme.colorScheme.surfaceVariant
+//                            )
+//                        )
+//                    }
+//                }
 
                 Spacer(Modifier.height(16.dp))
                 Text("提醒时间：", style = MaterialTheme.typography.titleMedium)

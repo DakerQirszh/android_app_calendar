@@ -19,7 +19,7 @@ class AlarmReceiver : BroadcastReceiver() {
         val title = intent.getStringExtra(EXTRA_TITLE) ?: "日程提醒"
         val desc = intent.getStringExtra(EXTRA_DESC).orEmpty().ifBlank { "点击查看详情" }
 
-        // Android 13+：没通知权限就不发（避免崩/无效）
+        // Android 13+
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             val granted = ContextCompat.checkSelfPermission(
                 context,
@@ -41,7 +41,7 @@ class AlarmReceiver : BroadcastReceiver() {
         )
 
         val notification = NotificationCompat.Builder(context, NotificationHelper.CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground) // 你也可以换成自己的通知图标
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(desc)
             .setStyle(NotificationCompat.BigTextStyle().bigText(desc))

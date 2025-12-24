@@ -37,15 +37,15 @@ import java.util.Calendar
 
 class MainActivity : ComponentActivity() {
 
-    // Android 13+ 通知权限
+    // 通知权限
     private val requestNotifPerm = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* granted -> 不强制处理 */ }
+    ) {  }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 进入就申请一次（Android 13+ 才需要）
+        // 进入就申请一次
         if (Build.VERSION.SDK_INT >= 33) {
             requestNotifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -91,7 +91,6 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
 
-                    // ---------- 新增弹窗 ----------
                     if (showAddDialog) {
                         AddEventDialog(
                             selectedDate = selectedDate,
@@ -106,11 +105,11 @@ class MainActivity : ComponentActivity() {
                                         time = reminderMillis
                                     )
 
-                                    // ✅ insert 拿到真实 id
+
                                     val newId = dao.insertEvent(newEvent).toInt()
                                     val eventWithId = newEvent.copy(id = newId)
 
-                                    // ✅ 安排提醒（如果 time != null 且未来）
+                                    // 安排提醒
                                     ReminderScheduler.schedule(this@MainActivity, eventWithId)
 
                                     eventsForDay = dao.getEventsByDate(selectedDate)
@@ -122,7 +121,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    // ---------- 查看弹窗 ----------
+                    // 弹窗
                     if (showViewDialog && viewingEvent != null) {
                         ViewEventDialog(
                             event = viewingEvent!!,
@@ -139,7 +138,6 @@ class MainActivity : ComponentActivity() {
                                 val toDelete = viewingEvent
                                 if (toDelete != null) {
                                     lifecycleScope.launch {
-                                        // ✅ 删除前取消提醒
                                         ReminderScheduler.cancel(this@MainActivity, toDelete)
 
                                         dao.deleteEvent(toDelete)
@@ -153,9 +151,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    // ---------- 编辑弹窗 ----------
-                    // 目前你的编辑弹窗只改标题/描述，不改 time
-                    // 所以这里暂时不做 schedule/cancel；后续你要支持改提醒时间，再加即可
+                    // 编辑弹窗
                     if (showEditDialog && editingEvent != null) {
                         EditEventDialog(
                             event = editingEvent!!,
@@ -180,7 +176,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    // ---------- 主界面 ----------
+                    // 主界面
                     Box(modifier = Modifier.fillMaxSize()) {
 
                         Column(modifier = Modifier.fillMaxSize()) {
@@ -252,7 +248,7 @@ class MainActivity : ComponentActivity() {
                                                 dao.updateEvent(event.copy(finished = !event.finished))
                                                 eventsForDay = dao.getEventsByDate(selectedDate)
 
-                                                // ✅ 完成后就取消提醒；取消完成则重新安排（如果有 time）
+                                                //  完成后就取消提醒；取消完成则重新安排
                                                 val updated = event.copy(finished = !event.finished)
                                                 ReminderScheduler.cancel(this@MainActivity, updated)
                                                 ReminderScheduler.schedule(this@MainActivity, updated)
@@ -260,7 +256,7 @@ class MainActivity : ComponentActivity() {
                                         },
                                         onDeleteEvent = { event ->
                                             lifecycleScope.launch {
-                                                // ✅ 删除前取消提醒
+                                                //  删除前取消提醒
                                                 ReminderScheduler.cancel(this@MainActivity, event)
 
                                                 dao.deleteEvent(event)
@@ -666,15 +662,19 @@ fun WeekView(
 fun startOfWeek(date: Long): Long {
     val cal = Calendar.getInstance().apply {
         timeInMillis = date
-        set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+        firstDayOfWeek = Calendar.MONDAY
+        // 清零时间
         set(Calendar.HOUR_OF_DAY, 0)
         set(Calendar.MINUTE, 0)
         set(Calendar.SECOND, 0)
         set(Calendar.MILLISECOND, 0)
     }
+    // 一直往前退，直到周一
+    while (cal.get(Calendar.DAY_OF_WEEK) != Calendar.MONDAY) {
+        cal.add(Calendar.DAY_OF_MONTH, -1)
+    }
     return cal.timeInMillis
 }
-
 fun getWeekDates(selectedDate: Long): List<Long> {
     val start = startOfWeek(selectedDate)
     val cal = Calendar.getInstance()
